@@ -49,7 +49,9 @@ extension OpenAI {
 
         /// Supported default models for the Responses API.
         public enum Model: String, Sendable {
-            case gpt5_1 = "gpt-5.1"
+            case gpt5_4 = "gpt-5.4"
+            case gpt5_4Mini = "gpt-5.4-mini"
+            case gpt5_4Nano = "gpt-5.4-nano"
             case gpt5 = "gpt-5"
             case gpt5Mini = "gpt-5-mini"
             case gpt5Nano = "gpt-5-nano"
@@ -57,14 +59,20 @@ extension OpenAI {
             /// Hardcoded token pricing (USD per 1,000,000 tokens).
             ///
             /// Source (provided): GPT-5 family pricing table:
-            /// - gpt-5.1: input $1.25, cached input $0.125, output $10.00
+            /// - gpt-5.4: input $2.50, cached input $0.25, output $15.00
+            /// - gpt-5.4-mini: input $0.75, cached input $0.075, output $4.50
+            /// - gpt-5.4-nano: input $0.20, cached input $0.02, output $1.25
             /// - gpt-5: input $1.25, cached input $0.125, output $10.00
             /// - gpt-5-mini: input $0.25, cached input $0.025, output $2.00
             /// - gpt-5-nano: input $0.05, cached input $0.005, output $0.40
             public var tokenPricing: TokenPricing {
                 switch self {
-                case .gpt5_1:
-                    return TokenPricing(input: 1.25, cachedInput: 0.125, output: 10.00)
+                case .gpt5_4:
+                    return TokenPricing(input: 2.50, cachedInput: 0.25, output: 15.00)
+                case .gpt5_4Mini:
+                    return TokenPricing(input: 0.75, cachedInput: 0.075, output: 4.50)
+                case .gpt5_4Nano:
+                    return TokenPricing(input: 0.20, cachedInput: 0.02, output: 1.25)
                 case .gpt5:
                     return TokenPricing(input: 1.25, cachedInput: 0.125, output: 10.00)
                 case .gpt5Mini:
@@ -569,7 +577,7 @@ private func resolveResponsesLimits(for model: OpenAI.Responses.Model)
         fallback: envInt("OPENAI_RESPONSES_MAX_IN_FLIGHT", fallback: defaultMaxInFlight)
     )
 
-    let defaultMinIntervalMs = model == .gpt5Mini ? 120 : 0
+    let defaultMinIntervalMs = (model == .gpt5Mini || model == .gpt5_4Mini) ? 120 : 0
     let minIntervalMs = envInt(
         "OPENAI_RESPONSES_MIN_INTERVAL_MS_\(model.envKey)",
         fallback: envInt("OPENAI_RESPONSES_MIN_INTERVAL_MS", fallback: defaultMinIntervalMs)
@@ -589,7 +597,9 @@ private func envInt(_ key: String, fallback: Int) -> Int {
 extension OpenAI.Responses.Model {
     fileprivate var envKey: String {
         switch self {
-        case .gpt5_1: return "GPT5_1"
+        case .gpt5_4: return "GPT5_4"
+        case .gpt5_4Mini: return "GPT5_4_MINI"
+        case .gpt5_4Nano: return "GPT5_4_NANO"
         case .gpt5: return "GPT5"
         case .gpt5Mini: return "GPT5_MINI"
         case .gpt5Nano: return "GPT5_NANO"
