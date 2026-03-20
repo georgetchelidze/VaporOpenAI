@@ -117,7 +117,7 @@ public enum OpenAI {
 
     private static func isRetryableStatus(_ status: HTTPResponseStatus) -> Bool {
         switch status.code {
-        case 408, 425, 429, 500, 502, 503, 504:
+        case 408, 425, 429, 500, 502, 503, 504, 520, 521, 522, 523, 524:
             return true
         default:
             return false
