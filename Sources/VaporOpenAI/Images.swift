@@ -2,8 +2,9 @@ import Foundation
 import Vapor
 
 extension OpenAI {
-    public enum Images {
+        public enum Images {
         public enum Model: String, Sendable {
+            case gptImage2 = "gpt-image-2"
             case gptImage15 = "gpt-image-1.5"
             case gptImage1 = "gpt-image-1"
             case gptImage1Mini = "gpt-image-1-mini"
@@ -201,6 +202,8 @@ extension OpenAI {
 
         private static func resolveTokenPricing(for model: Model) -> TokenPricing? {
             switch model {
+            case .gptImage2:
+                return nil
             case .gptImage15:
                 // USD per 1,000,000 image tokens.
                 return TokenPricing(inputPer1M: 8, outputPer1M: 32)
