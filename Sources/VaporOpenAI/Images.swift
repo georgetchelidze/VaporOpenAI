@@ -38,25 +38,38 @@ extension OpenAI {
 
         public struct UsageSummary: Sendable {
             public let inputTokens: Int?
+            public let textInputTokens: Int?
+            public let imageInputTokens: Int?
             public let outputTokens: Int?
+            public let textOutputTokens: Int?
+            public let imageOutputTokens: Int?
             public let totalTokens: Int?
             public let estimatedCostUSD: Double?
 
             public init(
                 inputTokens: Int?,
+                textInputTokens: Int? = nil,
+                imageInputTokens: Int? = nil,
                 outputTokens: Int?,
+                textOutputTokens: Int? = nil,
+                imageOutputTokens: Int? = nil,
                 totalTokens: Int?,
                 estimatedCostUSD: Double?
             ) {
                 self.inputTokens = inputTokens
+                self.textInputTokens = textInputTokens
+                self.imageInputTokens = imageInputTokens
                 self.outputTokens = outputTokens
+                self.textOutputTokens = textOutputTokens
+                self.imageOutputTokens = imageOutputTokens
                 self.totalTokens = totalTokens
                 self.estimatedCostUSD = estimatedCostUSD
             }
         }
 
         private struct TokenPricing {
-            let inputPer1M: Decimal
+            let textInputPer1M: Decimal
+            let imageInputPer1M: Decimal
             let outputPer1M: Decimal
         }
 
@@ -97,8 +110,15 @@ extension OpenAI {
             }
 
             struct Usage: Decodable {
+                struct TokenDetails: Decodable {
+                    let text_tokens: Int?
+                    let image_tokens: Int?
+                }
+
                 let input_tokens: Int?
+                let input_tokens_details: TokenDetails?
                 let output_tokens: Int?
+                let output_tokens_details: TokenDetails?
                 let total_tokens: Int?
             }
 
@@ -168,25 +188,39 @@ extension OpenAI {
                     let outputTokens = $0.output_tokens
                 {
                     let per1M = Decimal(1_000_000)
-                    let inputCost = (Decimal(inputTokens) / per1M) * pricing.inputPer1M
-                    let outputCost = (Decimal(outputTokens) / per1M) * pricing.outputPer1M
+                    let textInputTokens = $0.input_tokens_details?.text_tokens
+                    let imageInputTokens = $0.input_tokens_details?.image_tokens
+                    let detailedInputTokens = (textInputTokens ?? 0) + (imageInputTokens ?? 0)
+                    let fallbackInputTokens = max(0, inputTokens - detailedInputTokens)
+                    let inputCost =
+                        (Decimal(textInputTokens ?? 0) / per1M) * pricing.textInputPer1M
+                        + (Decimal(imageInputTokens ?? 0) / per1M) * pricing.imageInputPer1M
+                        + (Decimal(fallbackInputTokens) / per1M) * pricing.imageInputPer1M
+                    let outputCost =
+                        (Decimal(outputTokens) / per1M) * pricing.outputPer1M
                     estimatedCost = NSDecimalNumber(decimal: inputCost + outputCost).doubleValue
                 } else {
                     estimatedCost = nil
                 }
 
+                let detailLog =
+                    "input_text_tokens=\($0.input_tokens_details?.text_tokens ?? 0) input_image_tokens=\($0.input_tokens_details?.image_tokens ?? 0) output_text_tokens=\($0.output_tokens_details?.text_tokens ?? 0) output_image_tokens=\($0.output_tokens_details?.image_tokens ?? 0)"
                 if let estimatedCost {
                     app.logger.info(
-                        "OpenAI Images usage: model=\(model.rawValue) input_tokens=\($0.input_tokens ?? 0) output_tokens=\($0.output_tokens ?? 0) total_tokens=\($0.total_tokens ?? 0) estimated_cost_usd=\(estimatedCost)"
+                        "OpenAI Images usage: model=\(model.rawValue) input_tokens=\($0.input_tokens ?? 0) \(detailLog) output_tokens=\($0.output_tokens ?? 0) total_tokens=\($0.total_tokens ?? 0) estimated_cost_usd=\(estimatedCost)"
                     )
                 } else {
                     app.logger.info(
-                        "OpenAI Images usage: model=\(model.rawValue) input_tokens=\($0.input_tokens ?? 0) output_tokens=\($0.output_tokens ?? 0) total_tokens=\($0.total_tokens ?? 0) estimated_cost_usd=<unconfigured>"
+                        "OpenAI Images usage: model=\(model.rawValue) input_tokens=\($0.input_tokens ?? 0) \(detailLog) output_tokens=\($0.output_tokens ?? 0) total_tokens=\($0.total_tokens ?? 0) estimated_cost_usd=<unconfigured>"
                     )
                 }
                 return UsageSummary(
                     inputTokens: $0.input_tokens,
+                    textInputTokens: $0.input_tokens_details?.text_tokens,
+                    imageInputTokens: $0.input_tokens_details?.image_tokens,
                     outputTokens: $0.output_tokens,
+                    textOutputTokens: $0.output_tokens_details?.text_tokens,
+                    imageOutputTokens: $0.output_tokens_details?.image_tokens,
                     totalTokens: $0.total_tokens,
                     estimatedCostUSD: estimatedCost
                 )
@@ -203,10 +237,11 @@ extension OpenAI {
         private static func resolveTokenPricing(for model: Model) -> TokenPricing? {
             switch model {
             case .gptImage2:
-                return nil
+                // Source: https://openai.com/api/pricing/ (GPT-image-2, April 2026).
+                return TokenPricing(textInputPer1M: 5, imageInputPer1M: 8, outputPer1M: 30)
             case .gptImage15:
                 // USD per 1,000,000 image tokens.
-                return TokenPricing(inputPer1M: 8, outputPer1M: 32)
+                return TokenPricing(textInputPer1M: 8, imageInputPer1M: 8, outputPer1M: 32)
             case .gptImage1, .gptImage1Mini:
                 return nil
             }
