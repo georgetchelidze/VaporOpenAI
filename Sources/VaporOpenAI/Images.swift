@@ -10,12 +10,58 @@ extension OpenAI {
             case gptImage1Mini = "gpt-image-1-mini"
         }
 
-        public enum Size: String, Content, Sendable {
+        public enum Size: Content, Sendable {
             case auto
-            case square = "1024x1024"
-            case square2K = "2048x2048"
-            case portrait = "1024x1536"
-            case landscape = "1536x1024"
+            case square(SquareResolution = .standard)
+            case portrait
+            case landscape
+
+            public enum SquareResolution: String, Codable, Sendable {
+                case standard
+                case twoK
+            }
+
+            public var rawValue: String {
+                switch self {
+                case .auto:
+                    return "auto"
+                case .square(.standard):
+                    return "1024x1024"
+                case .square(.twoK):
+                    return "2048x2048"
+                case .portrait:
+                    return "1024x1536"
+                case .landscape:
+                    return "1536x1024"
+                }
+            }
+
+            public init(from decoder: any Decoder) throws {
+                let container = try decoder.singleValueContainer()
+                let rawValue = try container.decode(String.self)
+                switch rawValue {
+                case "auto":
+                    self = .auto
+                case "1024x1024":
+                    self = .square(.standard)
+                case "2048x2048":
+                    self = .square(.twoK)
+                case "1024x1536":
+                    self = .portrait
+                case "1536x1024":
+                    self = .landscape
+                default:
+                    throw DecodingError.dataCorruptedError(
+                        in: container,
+                        debugDescription: "Invalid image size: \(rawValue)"
+                    )
+                }
+            }
+
+            public func encode(to encoder: any Encoder) throws {
+                var container = encoder.singleValueContainer()
+                try container.encode(rawValue)
+            }
         }
 
         public enum Quality: String, Content, Sendable {
@@ -130,7 +176,7 @@ extension OpenAI {
         public static func generate(
             model: Model = .gptImage15,
             prompt: String,
-            size: Size = .square,
+            size: Size = .square(),
             quality: Quality = .medium,
             background: Background = .transparent,
             outputFormat: OutputFormat = .png,
@@ -184,7 +230,7 @@ extension OpenAI {
             maskData: Data? = nil,
             maskFilename: String = "mask.png",
             maskMimeType: String = "image/png",
-            size: Size = .square,
+            size: Size = .square(),
             quality: Quality = .high,
             outputFormat: OutputFormat = .png,
             on app: Application
