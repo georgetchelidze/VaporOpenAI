@@ -159,28 +159,135 @@ extension OpenAI {
                     .internalServerError, reason: "OpenAI image generation returned no image data")
             }
 
-            let imageData: Data
-            if let b64 = first.b64_json,
+            let imageData = try await decodeImageData(
+                from: first,
+                app: app,
+                emptyReason: "OpenAI image generation response did not include b64_json or url",
+                downloadReason: "OpenAI image URL download failed"
+            )
+
+            return Generation(
+                model: model,
+                imageData: imageData,
+                revisedPrompt: first.revised_prompt,
+                usage: usageSummary(from: envelope.usage, model: model, app: app)
+            )
+        }
+
+        public static func edit(
+            model: Model = .gptImage2,
+            prompt: String,
+            imageData: Data,
+            imageFilename: String = "image.png",
+            imageMimeType: String = "image/png",
+            maskData: Data? = nil,
+            maskFilename: String = "mask.png",
+            maskMimeType: String = "image/png",
+            size: Size = .square,
+            quality: Quality = .high,
+            outputFormat: OutputFormat = .png,
+            on app: Application
+        ) async throws -> Generation {
+            guard !imageData.isEmpty else {
+                throw Abort(.badRequest, reason: "OpenAI image edit error: image data is empty")
+            }
+
+            let boundary = "Boundary-\(UUID().uuidString)"
+            let body = makeEditMultipartBody(
+                boundary: boundary,
+                fields: [
+                    "model": model.rawValue,
+                    "prompt": prompt,
+                    "size": size.rawValue,
+                    "quality": quality.rawValue,
+                    "output_format": outputFormat.rawValue,
+                ],
+                imageData: imageData,
+                imageFilename: imageFilename,
+                imageMimeType: imageMimeType,
+                maskData: maskData,
+                maskFilename: maskFilename,
+                maskMimeType: maskMimeType
+            )
+
+            let response = try await OpenAI.post("images/edits", on: app) { req in
+                req.headers.remove(name: .contentType)
+                req.headers.add(
+                    name: .contentType, value: "multipart/form-data; boundary=\(boundary)")
+                req.body = .init(data: body)
+            }
+
+            try OpenAI.requireOK(response, context: "OpenAI image edit error")
+
+            let rawData = response.body.flatMap { Data(buffer: $0) } ?? Data()
+            let envelope = try JSONDecoder().decode(ResponseEnvelope.self, from: rawData)
+
+            guard let first = envelope.data.first else {
+                throw Abort(
+                    .internalServerError, reason: "OpenAI image edit returned no image data")
+            }
+
+            let imageData = try await decodeImageData(
+                from: first,
+                app: app,
+                emptyReason: "OpenAI image edit response did not include b64_json or url",
+                downloadReason: "OpenAI image edit URL download failed"
+            )
+
+            return Generation(
+                model: model,
+                imageData: imageData,
+                revisedPrompt: first.revised_prompt,
+                usage: usageSummary(from: envelope.usage, model: model, app: app)
+            )
+        }
+
+        private static func resolveTokenPricing(for model: Model) -> TokenPricing? {
+            switch model {
+            case .gptImage2:
+                // Source: https://openai.com/api/pricing/ (GPT-image-2, April 2026).
+                return TokenPricing(textInputPer1M: 5, imageInputPer1M: 8, outputPer1M: 30)
+            case .gptImage15:
+                // USD per 1,000,000 image tokens.
+                return TokenPricing(textInputPer1M: 8, imageInputPer1M: 8, outputPer1M: 32)
+            case .gptImage1, .gptImage1Mini:
+                return nil
+            }
+        }
+
+        private static func decodeImageData(
+            from item: ResponseEnvelope.Item,
+            app: Application,
+            emptyReason: String,
+            downloadReason: String
+        ) async throws -> Data {
+            if let b64 = item.b64_json,
                 let decoded = Data(base64Encoded: b64, options: .ignoreUnknownCharacters),
                 !decoded.isEmpty
             {
-                imageData = decoded
-            } else if let url = first.url, let parsed = URL(string: url) {
+                return decoded
+            }
+
+            if let url = item.url, let parsed = URL(string: url) {
                 let downloadResponse = try await app.client.get(URI(string: parsed.absoluteString))
                 guard downloadResponse.status == .ok,
                     let body = downloadResponse.body,
                     !body.readableBytesView.isEmpty
                 else {
-                    throw Abort(.internalServerError, reason: "OpenAI image URL download failed")
+                    throw Abort(.internalServerError, reason: downloadReason)
                 }
-                imageData = Data(buffer: body)
-            } else {
-                throw Abort(
-                    .internalServerError,
-                    reason: "OpenAI image generation response did not include b64_json or url")
+                return Data(buffer: body)
             }
 
-            let usage = envelope.usage.map {
+            throw Abort(.internalServerError, reason: emptyReason)
+        }
+
+        private static func usageSummary(
+            from usage: ResponseEnvelope.Usage?,
+            model: Model,
+            app: Application
+        ) -> UsageSummary? {
+            usage.map {
                 let pricing = resolveTokenPricing(for: model)
                 let estimatedCost: Double?
                 if let pricing,
@@ -225,26 +332,75 @@ extension OpenAI {
                     estimatedCostUSD: estimatedCost
                 )
             }
-
-            return Generation(
-                model: model,
-                imageData: imageData,
-                revisedPrompt: first.revised_prompt,
-                usage: usage
-            )
         }
 
-        private static func resolveTokenPricing(for model: Model) -> TokenPricing? {
-            switch model {
-            case .gptImage2:
-                // Source: https://openai.com/api/pricing/ (GPT-image-2, April 2026).
-                return TokenPricing(textInputPer1M: 5, imageInputPer1M: 8, outputPer1M: 30)
-            case .gptImage15:
-                // USD per 1,000,000 image tokens.
-                return TokenPricing(textInputPer1M: 8, imageInputPer1M: 8, outputPer1M: 32)
-            case .gptImage1, .gptImage1Mini:
-                return nil
+        private static func makeEditMultipartBody(
+            boundary: String,
+            fields: [String: String],
+            imageData: Data,
+            imageFilename: String,
+            imageMimeType: String,
+            maskData: Data?,
+            maskFilename: String,
+            maskMimeType: String
+        ) -> Data {
+            var data = Data()
+
+            for (name, value) in fields {
+                data.appendString("--\(boundary)\r\n")
+                data.appendString("Content-Disposition: form-data; name=\"\(name)\"\r\n\r\n")
+                data.appendString("\(value)\r\n")
             }
+
+            appendMultipartFile(
+                name: "image",
+                filename: imageFilename,
+                mimeType: imageMimeType,
+                fileData: imageData,
+                boundary: boundary,
+                to: &data
+            )
+
+            if let maskData {
+                appendMultipartFile(
+                    name: "mask",
+                    filename: maskFilename,
+                    mimeType: maskMimeType,
+                    fileData: maskData,
+                    boundary: boundary,
+                    to: &data
+                )
+            }
+
+            data.appendString("--\(boundary)--\r\n")
+            return data
         }
+
+        private static func appendMultipartFile(
+            name: String,
+            filename: String,
+            mimeType: String,
+            fileData: Data,
+            boundary: String,
+            to data: inout Data
+        ) {
+            data.appendString("--\(boundary)\r\n")
+            data.appendString(
+                "Content-Disposition: form-data; name=\"\(name)\"; filename=\"\(escapeForMultipart(filename))\"\r\n"
+            )
+            data.appendString("Content-Type: \(mimeType)\r\n\r\n")
+            data.append(fileData)
+            data.appendString("\r\n")
+        }
+
+        private static func escapeForMultipart(_ value: String) -> String {
+            value.replacingOccurrences(of: "\"", with: "\\\"")
+        }
+    }
+}
+
+extension Data {
+    fileprivate mutating func appendString(_ value: String) {
+        append(contentsOf: value.utf8)
     }
 }
