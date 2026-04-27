@@ -234,7 +234,7 @@ extension OpenAI {
 
         private struct RequestBody: Content {
             let model: String
-            let input: String
+            let input: JSONValue
             let instructions: String?
             let max_output_tokens: Int?
             let reasoning: Reasoning?
@@ -412,6 +412,37 @@ extension OpenAI {
             guard !input.isEmpty else {
                 return ("", nil)
             }
+
+            return try await createWithUsage(
+                model: model,
+                instructions: instructions,
+                input: .string(input),
+                textFormat: textFormat,
+                maxOutputTokens: maxOutputTokens,
+                reasoningEffort: reasoningEffort,
+                reasoningSummary: reasoningSummary,
+                verbosity: verbosity,
+                tools: tools,
+                include: include,
+                on: app
+            )
+        }
+
+        /// Variant of `createWithUsage(...)` for structured Responses API input,
+        /// including multimodal message content such as `input_text` and `input_image`.
+        public static func createWithUsage(
+            model: Model = .gpt5,
+            instructions: String? = nil,
+            input: JSONValue,
+            textFormat: TextFormatType? = nil,
+            maxOutputTokens: Int? = nil,
+            reasoningEffort: ReasoningEffort? = nil,
+            reasoningSummary: ReasoningSummary? = nil,
+            verbosity: Verbosity? = nil,
+            tools: [Tool]? = nil,
+            include: [String]? = nil,
+            on app: Application
+        ) async throws -> (text: String, usage: UsageSummary?) {
 
             // Choose model: explicit parameter wins; otherwise use a fixed default.
             let modelName = model.rawValue
