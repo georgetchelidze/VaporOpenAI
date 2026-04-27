@@ -13,6 +13,7 @@ extension OpenAI {
         public enum Size: String, Content, Sendable {
             case auto
             case square = "1024x1024"
+            case square2K = "2048x2048"
             case portrait = "1024x1536"
             case landscape = "1536x1024"
         }
