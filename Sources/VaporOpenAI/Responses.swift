@@ -47,39 +47,51 @@ extension OpenAI {
             }
         }
 
-        /// Supported default models for the Responses API.
-        public enum Model: String, Sendable {
-            case gpt5_4 = "gpt-5.4"
-            case gpt5_4Mini = "gpt-5.4-mini"
-            case gpt5_4Nano = "gpt-5.4-nano"
-            case gpt5 = "gpt-5"
-            case gpt5Mini = "gpt-5-mini"
-            case gpt5Nano = "gpt-5-nano"
+        /// Supported model IDs for the Responses API.
+        public struct Model: RawRepresentable, Hashable, ExpressibleByStringLiteral, Sendable {
+            public let rawValue: String
+            private let configuredTokenPricing: TokenPricing?
+
+            public init(rawValue: String) {
+                self.rawValue = rawValue
+                self.configuredTokenPricing = nil
+            }
+
+            public init(_ rawValue: String, tokenPricing: TokenPricing? = nil) {
+                self.rawValue = rawValue
+                self.configuredTokenPricing = tokenPricing
+            }
+
+            public init(stringLiteral value: String) {
+                self.rawValue = value
+                self.configuredTokenPricing = nil
+            }
+
+            public static let gpt5_5 = Model("gpt-5.5")
+            public static let gpt5_5Pro = Model("gpt-5.5-pro")
+
+            public static func == (lhs: Model, rhs: Model) -> Bool {
+                lhs.rawValue == rhs.rawValue
+            }
+
+            public func hash(into hasher: inout Hasher) {
+                hasher.combine(rawValue)
+            }
 
             /// Hardcoded token pricing (USD per 1,000,000 tokens).
             ///
-            /// Source (provided): GPT-5 family pricing table:
-            /// - gpt-5.4: input $2.50, cached input $0.25, output $15.00
-            /// - gpt-5.4-mini: input $0.75, cached input $0.075, output $4.50
-            /// - gpt-5.4-nano: input $0.20, cached input $0.02, output $1.25
-            /// - gpt-5: input $1.25, cached input $0.125, output $10.00
-            /// - gpt-5-mini: input $0.25, cached input $0.025, output $2.00
-            /// - gpt-5-nano: input $0.05, cached input $0.005, output $0.40
-            public var tokenPricing: TokenPricing {
-                switch self {
-                case .gpt5_4:
-                    return TokenPricing(input: 2.50, cachedInput: 0.25, output: 15.00)
-                case .gpt5_4Mini:
-                    return TokenPricing(input: 0.75, cachedInput: 0.075, output: 4.50)
-                case .gpt5_4Nano:
-                    return TokenPricing(input: 0.20, cachedInput: 0.02, output: 1.25)
-                case .gpt5:
-                    return TokenPricing(input: 1.25, cachedInput: 0.125, output: 10.00)
-                case .gpt5Mini:
-                    return TokenPricing(input: 0.25, cachedInput: 0.025, output: 2.00)
-                case .gpt5Nano:
-                    return TokenPricing(input: 0.05, cachedInput: 0.005, output: 0.40)
+            /// Source: OpenAI API pricing page, May 2026.
+            public var tokenPricing: TokenPricing? {
+                if let configuredTokenPricing {
+                    return configuredTokenPricing
                 }
+                if self == .gpt5_5 {
+                    return TokenPricing(input: 5.00, cachedInput: 0.50, output: 30.00)
+                }
+                if self == .gpt5_5Pro {
+                    return TokenPricing(input: 30.00, cachedInput: 30.00, output: 180.00)
+                }
+                return nil
             }
         }
         /// Controls how much internal "thinking" the model does.
@@ -318,7 +330,7 @@ extension OpenAI {
             public let cachedPromptTokens: Int
             public let completionTokens: Int
             public let totalTokens: Int
-            public let estimatedCostUSD: Double
+            public let estimatedCostUSD: Double?
 
             public init(
                 model: Model,
@@ -326,7 +338,7 @@ extension OpenAI {
                 cachedPromptTokens: Int,
                 completionTokens: Int,
                 totalTokens: Int,
-                estimatedCostUSD: Double
+                estimatedCostUSD: Double?
             ) {
                 self.model = model
                 self.promptTokens = promptTokens
@@ -345,13 +357,14 @@ extension OpenAI {
             let completionTokens = usage.completionTokens
             let cachedPromptTokens = usage.cachedPromptTokens
 
-            let pricing = model.tokenPricing
-            let estimatedDecimal = pricing.estimateCostUSD(
-                promptTokens: promptTokens,
-                cachedPromptTokens: cachedPromptTokens,
-                completionTokens: completionTokens
-            )
-            let estimatedCostUSD = NSDecimalNumber(decimal: estimatedDecimal).doubleValue
+            let estimatedCostUSD = model.tokenPricing.map { pricing in
+                let estimatedDecimal = pricing.estimateCostUSD(
+                    promptTokens: promptTokens,
+                    cachedPromptTokens: cachedPromptTokens,
+                    completionTokens: completionTokens
+                )
+                return NSDecimalNumber(decimal: estimatedDecimal).doubleValue
+            }
 
             return UsageSummary(
                 model: model,
@@ -366,7 +379,7 @@ extension OpenAI {
         /// Calls OpenAI's /v1/responses endpoint with a simple text input and
         /// returns the first text chunk (or the raw body if parsing fails).
         public static func create(
-            model: Model = .gpt5,
+            model: Model = .gpt5_5,
             instructions: String? = nil,
             input: String,
             textFormat: TextFormatType? = nil,
@@ -397,7 +410,7 @@ extension OpenAI {
         /// Variant of `create(...)` that returns a costed usage summary (when available)
         /// so callers (jobs/workflows) can persist spend to `KWR.Run.totalCost`.
         public static func createWithUsage(
-            model: Model = .gpt5,
+            model: Model = .gpt5_5,
             instructions: String? = nil,
             input: String,
             textFormat: TextFormatType? = nil,
@@ -431,7 +444,7 @@ extension OpenAI {
         /// Variant of `createWithUsage(...)` for structured Responses API input,
         /// including multimodal message content such as `input_text` and `input_image`.
         public static func createWithUsage(
-            model: Model = .gpt5,
+            model: Model = .gpt5_5,
             instructions: String? = nil,
             input: JSONValue,
             textFormat: TextFormatType? = nil,
@@ -478,9 +491,15 @@ extension OpenAI {
             if let usage = envelope.usage {
                 let computed = makeUsageSummary(model: model, usage: usage)
 
-                app.logger.info(
-                    "OpenAI Responses usage: model=\(modelName) prompt_tokens=\(computed.promptTokens) cached_prompt_tokens=\(computed.cachedPromptTokens) completion_tokens=\(computed.completionTokens) total_tokens=\(computed.totalTokens) estimated_cost_usd=\(computed.estimatedCostUSD)"
-                )
+                if let estimatedCostUSD = computed.estimatedCostUSD {
+                    app.logger.info(
+                        "OpenAI Responses usage: model=\(modelName) prompt_tokens=\(computed.promptTokens) cached_prompt_tokens=\(computed.cachedPromptTokens) completion_tokens=\(computed.completionTokens) total_tokens=\(computed.totalTokens) estimated_cost_usd=\(estimatedCostUSD)"
+                    )
+                } else {
+                    app.logger.info(
+                        "OpenAI Responses usage: model=\(modelName) prompt_tokens=\(computed.promptTokens) cached_prompt_tokens=\(computed.cachedPromptTokens) completion_tokens=\(computed.completionTokens) total_tokens=\(computed.totalTokens) estimated_cost_usd=<unconfigured>"
+                    )
+                }
                 summary = computed
             } else {
                 summary = nil
@@ -608,7 +627,7 @@ private func resolveResponsesLimits(for model: OpenAI.Responses.Model)
         fallback: envInt("OPENAI_RESPONSES_MAX_IN_FLIGHT", fallback: defaultMaxInFlight)
     )
 
-    let defaultMinIntervalMs = (model == .gpt5Mini || model == .gpt5_4Mini) ? 120 : 0
+    let defaultMinIntervalMs = 0
     let minIntervalMs = envInt(
         "OPENAI_RESPONSES_MIN_INTERVAL_MS_\(model.envKey)",
         fallback: envInt("OPENAI_RESPONSES_MIN_INTERVAL_MS", fallback: defaultMinIntervalMs)
@@ -627,13 +646,14 @@ private func envInt(_ key: String, fallback: Int) -> Int {
 
 extension OpenAI.Responses.Model {
     fileprivate var envKey: String {
-        switch self {
-        case .gpt5_4: return "GPT5_4"
-        case .gpt5_4Mini: return "GPT5_4_MINI"
-        case .gpt5_4Nano: return "GPT5_4_NANO"
-        case .gpt5: return "GPT5"
-        case .gpt5Mini: return "GPT5_MINI"
-        case .gpt5Nano: return "GPT5_NANO"
-        }
+        rawValue
+            .uppercased()
+            .map { $0.isLetter || $0.isNumber ? $0 : "_" }
+            .reduce(into: "") { result, character in
+                if character != "_" || !result.hasSuffix("_") {
+                    result.append(character)
+                }
+            }
+            .trimmingCharacters(in: CharacterSet(charactersIn: "_"))
     }
 }
